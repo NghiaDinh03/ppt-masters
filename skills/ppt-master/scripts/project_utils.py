@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 PPT Master - Project Utilities Module
 
@@ -36,7 +36,7 @@ except ImportError:
             'aspect_ratio': '2.35:1'
         },
         'xiaohongshu': {
-            'name': '小红书',
+            'name': 'Xiaohongshu (RED)',
             'dimensions': '1242×1660',
             'viewbox': '0 0 1242 1660',
             'aspect_ratio': '3:4'
@@ -71,8 +71,8 @@ CANVAS_FORMAT_ALIASES = {
     'xhs': 'xiaohongshu',
     'wechat_moment': 'moments',
     'wechat-moment': 'moments',
-    '朋友圈': 'moments',
-    '小红书': 'xiaohongshu',
+    '朋友圈': 'moments',       # Chinese alias
+    '小红书': 'xiaohongshu',   # Chinese alias
 }
 
 
@@ -480,3 +480,4 @@ if __name__ == '__main__':
             print("[OK] Project structure is complete, no issues found")
     else:
         print_usage()
+

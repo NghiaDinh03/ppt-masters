@@ -1,0 +1,53 @@
+services:
+  # ─────────────────────────────────────────────
+  # FastAPI Backend
+  # ─────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: ppt-master-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./projects:/app/projects
+      - ./exports:/app/exports
+      - ./uploads:/app/uploads
+      - ./settings.json:/app/settings.json
+      - ./skills:/app/skills
+      - ./models:/app/models
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Next.js Frontend
+  # ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ppt-master-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Ollama (Local LLM — Gemma4)
+  # ─────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ppt-master-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./models:/models
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

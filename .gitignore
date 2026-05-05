@@ -169,3 +169,14 @@ PERSONAL_NOTES.md
 # Use cloud sync (iCloud/Dropbox) for backup and multi-device access
 projects/*
 !projects/README.md
+
+# User uploads and exports (contain sensitive/generated data)
+uploads/
+exports/
+vi_documents/
+test_*.docx
+test_*.pdf
+test_*.pptx
+
+# Next.js build output
+frontend/.next/
