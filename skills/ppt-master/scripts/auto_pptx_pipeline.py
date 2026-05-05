@@ -89,7 +89,7 @@ def run_pipeline(
     else:
         extract_result = extract_from_docx(input_path, sources_dir)
 
-    print(f"  → {extract_result['total_slides']} slides extracted")
+    print(f"  -> {extract_result['total_slides']} slides extracted")
 
     # ── Step 2: Parse style prompt ──
     print("\n[Step 2/6] Parsing style prompt...")
@@ -102,7 +102,7 @@ def run_pipeline(
 
     style_path = project_path / "style_config.json"
     style_path.write_text(json.dumps(style_config, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"  → Style: {style_config.get('title', 'Default')}")
+    print(f"  -> Style: {style_config.get('title', 'Default')}")
 
     # ── Step 3: Enrich content with AI ──
     print(f"\n[Step 3/6] Enriching content with {llm_provider}...")
@@ -111,10 +111,10 @@ def run_pipeline(
     try:
         enriched = enrich_slides(project_path, llm_provider)
         enriched_count = sum(1 for s in enriched if s.get("enriched"))
-        print(f"  → {enriched_count}/{len(enriched)} slides enriched")
+        print(f"  -> {enriched_count}/{len(enriched)} slides enriched")
     except Exception as e:
-        print(f"  → Enrichment failed: {e}")
-        print(f"  → Using raw content as fallback")
+        print(f"  -> Enrichment failed: {e}")
+        print(f"  -> Using raw content as fallback")
         # Create enriched from metadata
         metadata = json.loads((sources_dir / "slide_metadata.json").read_text(encoding="utf-8"))
         enriched = []
@@ -145,20 +145,20 @@ def run_pipeline(
     try:
         image_mapping = process_slide_images(project_path, image_mode)
         total_images = sum(len(v) for v in image_mapping.values())
-        print(f"  → {total_images} images acquired")
+        print(f"  -> {total_images} images acquired")
     except Exception as e:
-        print(f"  → Image pipeline failed: {e}")
-        print(f"  → Continuing without images")
+        print(f"  -> Image pipeline failed: {e}")
+        print(f"  -> Continuing without images")
 
-    # ── Step 5: Assemble slides → SVG → PPTX ──
+    # ── Step 5: Assemble slides -> SVG -> PPTX ──
     print("\n[Step 5/6] Assembling slides...")
     from assemble_slides import assemble
 
     try:
         assemble_result = assemble(project_path)
-        print(f"  → {assemble_result['total_slides']} SVG slides generated")
+        print(f"  -> {assemble_result['total_slides']} SVG slides generated")
     except Exception as e:
-        print(f"  → Assembly failed: {e}")
+        print(f"  -> Assembly failed: {e}")
         return {"status": "error", "error": str(e), "project_path": str(project_path)}
 
     # ── Step 6: Audio (optional) ──
@@ -168,9 +168,9 @@ def run_pipeline(
 
         try:
             audio_mapping = generate_slide_audio(project_path, tts_provider, voice=tts_voice)
-            print(f"  → {len(audio_mapping)} audio files generated")
+            print(f"  -> {len(audio_mapping)} audio files generated")
         except Exception as e:
-            print(f"  → Audio generation failed: {e}")
+            print(f"  -> Audio generation failed: {e}")
     else:
         print("\n[Step 6/6] Audio generation skipped")
 
