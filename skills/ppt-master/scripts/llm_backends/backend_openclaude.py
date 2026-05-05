@@ -18,6 +18,12 @@ import os
 import sys
 import json
 
+
+# Windows console encoding fix
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
@@ -94,7 +100,7 @@ QUY TẮC BẮT BUỘC:
 2. Bổ sung giải thích, ví dụ minh họa khi cần thiết
 3. Sử dụng ngôn ngữ đơn giản, dễ tiếp cận cho người học
 4. Format: bullet points rõ ràng, có tiêu đề phụ nếu cần
-5. Nếu có dữ liệu số → giữ nguyên số, thêm context giải thích
+5. Nếu có dữ liệu số -> giữ nguyên số, thêm context giải thích
 6. Mục tiêu: Người đọc slide này hiểu ngay nội dung mà không cần nghe giảng thêm
 
 VÍ DỤ:

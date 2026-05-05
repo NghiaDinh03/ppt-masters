@@ -23,6 +23,9 @@ import sys
 import subprocess
 import re
 
+# Fix Windows console encoding
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
 app = FastAPI(title="PPT Master API", version="1.0.0")
 
 # CORS for Next.js frontend

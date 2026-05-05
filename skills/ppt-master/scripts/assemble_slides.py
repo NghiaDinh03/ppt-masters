@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Assemble Slides — Ráp content + images → SVG → PPTX
+Assemble Slides — Ráp content + images -> SVG -> PPTX
 
 Input: slides_enriched.json + image_mapping.json + style_config.json
-Output: svg_output/slide_XX.svg → exports/presentation.pptx
+Output: svg_output/slide_XX.svg -> exports/presentation.pptx
 
 Usage:
     python3 assemble_slides.py <project_path>
@@ -14,6 +14,12 @@ import os
 import json
 import subprocess
 from pathlib import Path
+
+
+# Windows console encoding fix
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
