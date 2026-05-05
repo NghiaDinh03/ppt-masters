@@ -156,12 +156,17 @@ def _load_style(project_path: Path) -> dict:
 
 def _escape_xml(text: str) -> str:
     """Escape text for SVG/XML."""
-    return (text
-            .replace("&", "&")
-            .replace("<", "<")
-            .replace(">", ">")
-            .replace('"', """)
-            .replace("'", "'"))
+    amp = chr(38) + "amp;"
+    lt = chr(38) + "lt;"
+    gt = chr(38) + "gt;"
+    quot = chr(38) + "quot;"
+    apos = chr(38) + "apos;"
+    text = text.replace(chr(38), amp)
+    text = text.replace("<", lt)
+    text = text.replace(">", gt)
+    text = text.replace('"', quot)
+    text = text.replace(chr(39), apos)
+    return text
 
 
 def _wrap_text(text: str, max_chars: int = 60) -> list:
