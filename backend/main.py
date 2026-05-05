@@ -1035,6 +1035,165 @@ async def llm_status():
     return {"status": "configured", "provider": provider}
 
 
+# ─────────────────────────────────────────────
+# Pipeline — Auto PPTX Generation
+# ─────────────────────────────────────────────
+
+# In-memory pipeline status tracking
+_pipeline_jobs: dict = {}
+
+
+@app.post("/api/pipeline/run")
+async def run_pipeline(
+    file: UploadFile = File(...),
+    style_prompt: str = Form(""),
+    image_mode: str = Form("auto"),
+    llm_provider: str = Form("openclaude"),
+    tts_provider: str = Form("none"),
+    tts_voice: str = Form(""),
+    skip_audio: bool = Form(True),
+):
+    """Trigger the full PPTX generation pipeline."""
+    import uuid
+    job_id = str(uuid.uuid4())[:8]
+
+    # Save uploaded file
+    file_id = str(uuid.uuid4())[:8]
+    upload_path = UPLOADS_DIR / f"{file_id}_{file.filename}"
+    with open(upload_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    # Determine output dir
+    original_name = Path(file.filename).stem
+    output_dir = PROJECTS_DIR / f"{original_name}_{job_id}"
+    output_dir.mkdir(exist_ok=True)
+
+    _pipeline_jobs[job_id] = {
+        "status": "running",
+        "progress": "Starting pipeline...",
+        "input_file": file.filename,
+        "output_dir": str(output_dir),
+        "result": None,
+        "error": None,
+    }
+
+    # Run pipeline in background thread
+    import threading
+
+    def _run():
+        try:
+            # Add scripts dir to path
+            scripts_dir = BASE_DIR / "skills" / "ppt-master" / "scripts"
+            if str(scripts_dir) not in sys.path:
+                sys.path.insert(0, str(scripts_dir))
+
+            from auto_pptx_pipeline import run_pipeline as _run_pipeline
+
+            _pipeline_jobs[job_id]["progress"] = "Extracting content..."
+
+            result = _run_pipeline(
+                input_file=str(upload_path),
+                style_prompt=style_prompt,
+                image_mode=image_mode,
+                llm_provider=llm_provider,
+                tts_provider=tts_provider if tts_provider != "none" else None,
+                tts_voice=tts_voice or None,
+                output_dir=str(output_dir),
+                skip_audio=skip_audio,
+            )
+
+            _pipeline_jobs[job_id]["status"] = "completed"
+            _pipeline_jobs[job_id]["result"] = result
+            _pipeline_jobs[job_id]["progress"] = "Done!"
+
+            # Find PPTX output
+            pptx_files = list(output_dir.rglob("*.pptx"))
+            if pptx_files:
+                _pipeline_jobs[job_id]["pptx_path"] = str(pptx_files[0])
+
+        except Exception as e:
+            _pipeline_jobs[job_id]["status"] = "error"
+            _pipeline_jobs[job_id]["error"] = str(e)
+            _pipeline_jobs[job_id]["progress"] = f"Error: {str(e)[:200]}"
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    return {"job_id": job_id, "status": "started", "output_dir": str(output_dir)}
+
+
+@app.get("/api/pipeline/status/{job_id}")
+async def pipeline_status(job_id: str):
+    """Check pipeline job status."""
+    if job_id not in _pipeline_jobs:
+        raise HTTPException(404, "Job not found")
+    return _pipeline_jobs[job_id]
+
+
+@app.get("/api/pipeline/download/{job_id}")
+async def pipeline_download(job_id: str):
+    """Download the generated PPTX."""
+    if job_id not in _pipeline_jobs:
+        raise HTTPException(404, "Job not found")
+
+    job = _pipeline_jobs[job_id]
+    pptx_path = job.get("pptx_path")
+    if not pptx_path or not Path(pptx_path).exists():
+        raise HTTPException(404, "PPTX not ready yet")
+
+    return FileResponse(
+        path=pptx_path,
+        filename=Path(pptx_path).name,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+
+@app.get("/api/pipeline/slides/{job_id}")
+async def pipeline_slides(job_id: str):
+    """Get slide data for preview."""
+    if job_id not in _pipeline_jobs:
+        raise HTTPException(404, "Job not found")
+
+    job = _pipeline_jobs[job_id]
+    output_dir = Path(job.get("output_dir", ""))
+
+    enriched_path = output_dir / "slides_enriched.json"
+    if not enriched_path.exists():
+        return {"slides": [], "status": job["status"]}
+
+    slides = json.loads(enriched_path.read_text(encoding="utf-8"))
+
+    # Add image paths
+    for slide in slides:
+        num = slide.get("slide_number", 0)
+        slide_dir = output_dir / "slides" / f"slide_{num:02d}"
+        images = list((slide_dir / "images").glob("*")) if (slide_dir / "images").exists() else []
+        slide["local_images"] = [str(img) for img in images]
+
+    return {"slides": slides, "status": job["status"], "total": len(slides)}
+
+
+@app.get("/api/pipeline/slide-image/{job_id}/{slide_num}")
+async def pipeline_slide_image(job_id: str, slide_num: int):
+    """Get slide image for preview."""
+    if job_id not in _pipeline_jobs:
+        raise HTTPException(404, "Job not found")
+
+    job = _pipeline_jobs[job_id]
+    output_dir = Path(job.get("output_dir", ""))
+    images_dir = output_dir / "slides" / f"slide_{slide_num:02d}" / "images"
+
+    if not images_dir.exists():
+        raise HTTPException(404, "No images for this slide")
+
+    images = list(images_dir.glob("*"))
+    if not images:
+        raise HTTPException(404, "No images found")
+
+    return FileResponse(path=str(images[0]))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

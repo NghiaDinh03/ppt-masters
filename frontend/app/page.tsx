@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 
-type Page = 'home' | 'storyboard' | 'projects' | 'settings';
+type Page = 'home' | 'storyboard' | 'projects' | 'settings' | 'pipeline';
 
 // SVG Icons (inline, no emoji)
 const Icons = {
@@ -100,6 +100,7 @@ const Icons = {
 
 const navItems: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: 'home', label: 'Dashboard', icon: Icons.home },
+  { id: 'pipeline', label: 'PPTX Pipeline', icon: Icons.zap },
   { id: 'storyboard', label: 'Storyboard', icon: Icons.fileText },
   { id: 'projects', label: 'Projects', icon: Icons.folder },
   { id: 'settings', label: 'Settings', icon: Icons.settings },
@@ -226,6 +227,7 @@ export default function Home() {
         background: '#0a0a0f',
       }}>
         {page === 'home' && <HomePage onNavigate={setPage} />}
+        {page === 'pipeline' && <PipelinePage />}
         {page === 'storyboard' && <StoryboardPage />}
         {page === 'projects' && <ProjectsPage />}
         {page === 'settings' && <SettingsPage />}
@@ -257,6 +259,18 @@ const inputStyle: React.CSSProperties = {
   fontSize: '14px',
   outline: 'none',
   transition: 'border-color 0.2s',
+};
+
+const selectStyle: React.CSSProperties = {
+  background: 'rgba(255,255,255,0.04)',
+  border: '1px solid rgba(255,255,255,0.08)',
+  borderRadius: '8px',
+  padding: '10px 14px',
+  color: '#fff',
+  width: '100%',
+  fontSize: '13px',
+  outline: 'none',
+  cursor: 'pointer',
 };
 
 const btnPrimaryStyle: React.CSSProperties = {
@@ -292,6 +306,246 @@ const btnSecondaryStyle: React.CSSProperties = {
 // ─────────────────────────────────────────────
 // Home Page
 // ─────────────────────────────────────────────
+
+// ─────────────────────────────────────────────
+// Pipeline Page — Auto PPTX Generation
+// ─────────────────────────────────────────────
+
+function PipelinePage() {
+  const [file, setFile] = useState<File | null>(null);
+  const [stylePrompt, setStylePrompt] = useState('[title] Presentation\n[style] hiện đại, xanh dương\n[font] Montserrat 36pt\n[layout] 2 cột\n[image] hình ảnh minh họa\n[language] tiếng Việt\n[pages] 8-10 slides');
+  const [imageMode, setImageMode] = useState('auto');
+  const [llmProvider, setLlmProvider] = useState('openclaude');
+  const [ttsProvider, setTtsProvider] = useState('none');
+  const [skipAudio, setSkipAudio] = useState(true);
+  const [isRunning, setIsRunning] = useState(false);
+  const [jobId, setJobId] = useState('');
+  const [jobStatus, setJobStatus] = useState<any>(null);
+  const [slides, setSlides] = useState<any[]>([]);
+  const [error, setError] = useState('');
+
+  const handleRun = async () => {
+    if (!file) { setError('Please select a file'); return; }
+    setError('');
+    setIsRunning(true);
+    setSlides([]);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('style_prompt', stylePrompt);
+    formData.append('image_mode', imageMode);
+    formData.append('llm_provider', llmProvider);
+    formData.append('tts_provider', ttsProvider);
+    formData.append('skip_audio', skipAudio.toString());
+
+    try {
+      const res = await fetch('http://localhost:8000/api/pipeline/run', { method: 'POST', body: formData });
+      const data = await res.json();
+      setJobId(data.job_id);
+      pollStatus(data.job_id);
+    } catch (e: any) {
+      setError(e.message);
+      setIsRunning(false);
+    }
+  };
+
+  const pollStatus = (id: string) => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/api/pipeline/status/${id}`);
+        const data = await res.json();
+        setJobStatus(data);
+
+        if (data.status === 'completed' || data.status === 'error') {
+          clearInterval(interval);
+          setIsRunning(false);
+          if (data.status === 'error') setError(data.error || 'Pipeline failed');
+          if (data.status === 'completed') fetchSlides(id);
+        }
+      } catch { clearInterval(interval); setIsRunning(false); }
+    }, 2000);
+  };
+
+  const fetchSlides = async (id: string) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/pipeline/slides/${id}`);
+      const data = await res.json();
+      setSlides(data.slides || []);
+    } catch {}
+  };
+
+  const handleDownload = () => {
+    if (jobId) window.open(`http://localhost:8000/api/pipeline/download/${jobId}`, '_blank');
+  };
+
+  return (
+    <div>
+      <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
+        {Icons.zap} PPTX Pipeline
+      </h2>
+      <p style={{ color: 'rgba(255,255,255,0.5)', marginBottom: '32px', fontSize: '14px' }}>
+        Upload file → AI processes content → Generate editable PPTX with images
+      </p>
+
+      {/* Upload */}
+      <div style={{ ...cardStyle, marginBottom: '24px' }}>
+        <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>1. Upload Document</h3>
+        <div style={{
+          border: '2px dashed rgba(91,141,239,0.3)', borderRadius: '12px', padding: '32px',
+          textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s',
+          background: file ? 'rgba(91,141,239,0.05)' : 'transparent',
+        }} onClick={() => document.getElementById('pipeline-file')?.click()}>
+          <input id="pipeline-file" type="file" accept=".pptx,.docx,.pdf,.xlsx" hidden
+            onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          {file ? (
+            <div>
+              <div style={{ fontSize: '32px', marginBottom: '8px' }}>{Icons.file}</div>
+              <p style={{ color: '#5b8def', fontWeight: 600 }}>{file.name}</p>
+              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>{(file.size / 1024).toFixed(0)} KB</p>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: '32px', marginBottom: '8px', opacity: 0.5 }}>{Icons.upload}</div>
+              <p style={{ color: 'rgba(255,255,255,0.5)' }}>Click to upload PPTX, DOCX, PDF, or XLSX</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Style Prompt */}
+      <div style={{ ...cardStyle, marginBottom: '24px' }}>
+        <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>2. Style Prompt</h3>
+        <textarea value={stylePrompt} onChange={(e) => setStylePrompt(e.target.value)}
+          style={{
+            width: '100%', minHeight: '140px', background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
+            padding: '12px', color: '#fff', fontSize: '13px', fontFamily: 'monospace',
+            resize: 'vertical',
+          }}
+          placeholder="[title] Your presentation title&#10;[style] modern, blue theme&#10;[font] Montserrat 36pt&#10;[layout] two columns&#10;[image] relevant images&#10;[language] Vietnamese&#10;[pages] 8-10 slides"
+        />
+        <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', marginTop: '8px' }}>
+          Use tags: [title] [style] [font] [layout] [icon] [image] [language] [pages]
+        </p>
+      </div>
+
+      {/* Options */}
+      <div style={{ ...cardStyle, marginBottom: '24px' }}>
+        <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>3. Options</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+          <div>
+            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', display: 'block', marginBottom: '6px' }}>Image Mode</label>
+            <select value={imageMode} onChange={(e) => setImageMode(e.target.value)}
+              style={selectStyle}>
+              <option value="auto">Auto (Search → Gen)</option>
+              <option value="search">Search Only (Pexels/Pixabay)</option>
+              <option value="pollinations">AI Gen (Pollinations Free)</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', display: 'block', marginBottom: '6px' }}>LLM Provider</label>
+            <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)}
+              style={selectStyle}>
+              <option value="openclaude">Open Claude (kimi-k2.5)</option>
+              <option value="ollama">Ollama Local (Gemma4)</option>
+              <option value="none">None (Raw Content)</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', display: 'block', marginBottom: '6px' }}>Audio</label>
+            <select value={ttsProvider} onChange={(e) => { setTtsProvider(e.target.value); setSkipAudio(e.target.value === 'none'); }}
+              style={selectStyle}>
+              <option value="none">No Audio</option>
+              <option value="edge">Edge TTS (Free)</option>
+              <option value="elevenlabs">ElevenLabs</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Run Button */}
+      <button onClick={handleRun} disabled={isRunning || !file}
+        style={{
+          width: '100%', padding: '16px', borderRadius: '12px', border: 'none',
+          background: isRunning ? 'rgba(91,141,239,0.3)' : 'linear-gradient(135deg, #5b8def 0%, #8b5cf6 100%)',
+          color: '#fff', fontSize: '16px', fontWeight: 600, cursor: isRunning ? 'wait' : 'pointer',
+          marginBottom: '24px', transition: 'all 0.2s',
+        }}>
+        {isRunning ? `Running... ${jobStatus?.progress || ''}` : 'Generate PPTX'}
+      </button>
+
+      {error && (
+        <div style={{ background: 'rgba(234,67,53,0.1)', border: '1px solid rgba(234,67,53,0.3)',
+          borderRadius: '8px', padding: '12px 16px', marginBottom: '24px', color: '#ea4335', fontSize: '13px' }}>
+          {error}
+        </div>
+      )}
+
+      {/* Progress */}
+      {jobStatus && (
+        <div style={{ ...cardStyle, marginBottom: '24px' }}>
+          <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>
+            Status: <span style={{ color: jobStatus.status === 'completed' ? '#34a853' : jobStatus.status === 'error' ? '#ea4335' : '#5b8def' }}>
+              {jobStatus.status}
+            </span>
+          </h3>
+          <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px' }}>{jobStatus.progress}</p>
+          {jobStatus.status === 'completed' && (
+            <button onClick={handleDownload} style={{
+              marginTop: '12px', padding: '10px 24px', borderRadius: '8px', border: 'none',
+              background: '#34a853', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '14px',
+            }}>
+              Download PPTX
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Slide Preview */}
+      {slides.length > 0 && (
+        <div style={{ ...cardStyle }}>
+          <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
+            Slides Preview ({slides.length} slides)
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+            {slides.map((slide: any, i: number) => (
+              <div key={i} style={{
+                background: 'rgba(255,255,255,0.03)', borderRadius: '8px', padding: '16px',
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ color: '#5b8def', fontSize: '12px', fontWeight: 600 }}>
+                    Slide {slide.slide_number}
+                  </span>
+                  <span style={{
+                    fontSize: '10px', padding: '2px 8px', borderRadius: '4px',
+                    background: slide.enriched ? 'rgba(52,168,83,0.2)' : 'rgba(255,255,255,0.1)',
+                    color: slide.enriched ? '#34a853' : 'rgba(255,255,255,0.4)',
+                  }}>
+                    {slide.enriched ? 'Enriched' : 'Raw'}
+                  </span>
+                </div>
+                <h4 style={{ color: '#fff', fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>
+                  {slide.title?.substring(0, 50)}
+                </h4>
+                <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', lineHeight: '1.5',
+                  maxHeight: '60px', overflow: 'hidden' }}>
+                  {slide.content?.substring(0, 120)}...
+                </p>
+                {slide.local_images?.length > 0 && (
+                  <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>
+                    {slide.local_images.length} image(s)
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function HomePage({ onNavigate }: { onNavigate: (p: Page) => void }) {
   return (
