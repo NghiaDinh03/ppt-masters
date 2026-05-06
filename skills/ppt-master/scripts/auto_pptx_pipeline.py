@@ -84,7 +84,7 @@ def run_pipeline(
     print("=" * 60)
 
     # ── Step 1: Extract slide assets ──
-    print("\n[Step 1/6] Extracting slide content + images...")
+    print("\n[Step 1/7] Extracting slide content + images...")
     from extract_slide_assets import extract_from_pptx, extract_from_docx, extract_from_pdf
 
     suffix = input_path.suffix.lower()
@@ -96,6 +96,15 @@ def run_pipeline(
         extract_result = extract_from_docx(input_path, sources_dir)
 
     print(f"  -> {extract_result['total_slides']} slides extracted")
+
+    # ── Step 1.5: OCR images (extract text from embedded images) ──
+    print("\n[Step 1.5/7] OCR on extracted images...")
+    try:
+        from ocr_slide_images import ocr_slide_images
+        ocr_result = ocr_slide_images(project_path)
+        print(f"  -> {ocr_result.get('ocr_count', 0)} images OCR processed")
+    except Exception as e:
+        print(f"  -> OCR skipped: {str(e)[:80]}")
 
     # ── Step 2: Parse style prompt ──
     print("\n[Step 2/6] Parsing style prompt...")
@@ -110,34 +119,37 @@ def run_pipeline(
     style_path.write_text(json.dumps(style_config, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"  -> Style: {style_config.get('title', 'Default')}")
 
-    # ── Step 3: Enrich content with AI ──
-    print(f"\n[Step 3/6] Enriching content with {llm_provider}...")
-    from enrich_content import enrich_slides
-
+    # ── Step 3: Vision + Text AI analysis (2-pass) ──
+    print(f"\n[Step 3/7] Vision + Text AI analysis ({llm_provider})...")
     try:
-        enriched = enrich_slides(project_path, llm_provider)
-        enriched_count = sum(1 for s in enriched if s.get("enriched"))
-        print(f"  -> {enriched_count}/{len(enriched)} slides enriched")
+        from vision_analyze_slides import vision_analyze_slides
+        vision_result = vision_analyze_slides(project_path, llm_provider)
+        print(f"  -> {vision_result.get('vision_count', 0)} slides with vision analysis")
+        print(f"  -> {vision_result.get('enriched_count', 0)} slides enriched")
     except Exception as e:
-        print(f"  -> Enrichment failed: {e}")
-        print(f"  -> Using raw content as fallback")
-        # Create enriched from metadata
-        metadata = json.loads((sources_dir / "slide_metadata.json").read_text(encoding="utf-8"))
-        enriched = []
-        for slide in metadata:
-            enriched.append({
-                **slide,
-                "content": slide.get("content_raw", ""),
-                "bullet_points": [],
-                "enriched": False,
-                "image_hint": f"hình ảnh liên quan đến {slide.get('title', '')}",
-            })
-        enriched_path = project_path / "slides_enriched.json"
-        enriched_path.write_text(json.dumps(enriched, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  -> Vision analysis failed: {e}")
+        print(f"  -> Falling back to basic enrichment...")
+        try:
+            from enrich_content import enrich_slides
+            enrich_slides(project_path, llm_provider)
+        except Exception as e2:
+            print(f"  -> Basic enrichment also failed: {e2}")
+            # Create enriched from metadata
+            metadata = json.loads((sources_dir / "slide_metadata.json").read_text(encoding="utf-8"))
+            enriched = []
+            for slide in metadata:
+                enriched.append({
+                    **slide,
+                    "content": slide.get("content_raw", ""),
+                    "bullet_points": [],
+                    "enriched": False,
+                    "image_hint": f"hinh anh lien quan den {slide.get('title', '')}",
+                })
+            enriched_path = project_path / "slides_enriched.json"
+            enriched_path.write_text(json.dumps(enriched, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        # Create per-slide folders
-        slides_dir = project_path / "slides"
-        slides_dir.mkdir(exist_ok=True)
+            slides_dir = project_path / "slides"
+            slides_dir.mkdir(exist_ok=True)
         for slide in enriched:
             num = slide.get("slide_number", 0)
             slide_dir = slides_dir / f"slide_{num:02d}"

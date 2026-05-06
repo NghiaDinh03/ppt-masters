@@ -68,6 +68,12 @@ def assemble(project_path: Path) -> dict:
         title = slide.get("title", f"Slide {num}")
         content = slide.get("content", slide.get("content_raw", ""))
         bullet_points = slide.get("bullet_points", [])
+        table_data = slide.get("table_data", [])
+        ocr_text = slide.get("ocr_text", "")
+
+        # Merge OCR text into content if available
+        if ocr_text and ocr_text not in content:
+            content = content + "\n\n[Noi dung tu hinh anh]\n" + ocr_text
 
         # Get image for this slide
         slide_key = f"slide_{num:02d}"
@@ -86,6 +92,8 @@ def assemble(project_path: Path) -> dict:
             svg = _generate_title_slide(title, content, style, img_path)
         elif slide_type in ("closing", "end"):
             svg = _generate_closing_slide(title, content, style)
+        elif table_data and len(table_data) >= 2:
+            svg = _generate_table_slide(title, content, bullet_points, table_data, style, img_path, num)
         else:
             svg = _generate_content_slide(title, content, bullet_points, style, img_path, num)
 
@@ -309,6 +317,81 @@ def _generate_content_slide(title: str, content: str, bullet_points: list, style
 {bullet_svg}
 {image_svg}
     <!-- Slide number -->
+    <text x="1860" y="1050" text-anchor="end" font-family="{body_font}" font-size="14" fill="{text_color}" opacity="0.4">
+      {slide_num_display}
+    </text>
+  </g>
+</svg>'''
+
+
+def _generate_table_slide(title: str, content: str, bullet_points: list, table_data: list, style: dict, img_path: str = None, slide_num: int = 1) -> str:
+    """Generate a data/table slide SVG."""
+    colors = style.get("colors", {})
+    fonts = style.get("fonts", {})
+    bg = colors.get("background", "#0f0f23")
+    accent = colors.get("accent", "#4a90d9")
+    text_color = colors.get("text", "#ffffff")
+    heading_font = fonts.get("heading", "Montserrat")
+    body_font = fonts.get("body", "Open Sans")
+    heading_size = fonts.get("heading_size", 36)
+    body_size = fonts.get("body_size", 16)
+
+    # Parse table rows (pipe-separated)
+    rows = []
+    for row_str in table_data:
+        cells = [c.strip() for c in row_str.split("|") if c.strip()]
+        if cells:
+            rows.append(cells)
+
+    if not rows:
+        return _generate_content_slide(title, content, bullet_points, style, img_path, slide_num)
+
+    # Calculate table dimensions
+    num_cols = max(len(r) for r in rows)
+    col_width = min(280, (1680 // num_cols))
+    row_height = 40
+    table_x = 120
+    table_y = 220
+    max_rows = min(len(rows), 18)  # Limit rows to fit on slide
+
+    # Build table SVG
+    table_svg = ""
+    for r_idx, row in enumerate(rows[:max_rows]):
+        for c_idx, cell in enumerate(row[:num_cols]):
+            x = table_x + c_idx * col_width
+            y = table_y + r_idx * row_height
+
+            # Header row styling
+            if r_idx == 0:
+                table_svg += f'    <rect x="{x}" y="{y}" width="{col_width}" height="{row_height}" fill="{accent}" rx="2"/>\n'
+                table_svg += f'    <text x="{x + 10}" y="{y + 26}" font-family="{body_font}" font-weight="Bold" font-size="{body_size}" fill="#ffffff">{_escape_xml(cell[:40])}</text>\n'
+            else:
+                bg_fill = "rgba(255,255,255,0.03)" if r_idx % 2 == 0 else "rgba(255,255,255,0.06)"
+                table_svg += f'    <rect x="{x}" y="{y}" width="{col_width}" height="{row_height}" fill="{bg_fill}"/>\n'
+                table_svg += f'    <rect x="{x}" y="{y}" width="{col_width}" height="{row_height}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>\n'
+                table_svg += f'    <text x="{x + 10}" y="{y + 26}" font-family="{body_font}" font-size="{body_size - 1}" fill="{text_color}">{_escape_xml(cell[:40])}</text>\n'
+
+    # Bullet points below table (if any)
+    bullet_svg = ""
+    bp_start_y = table_y + max_rows * row_height + 30
+    for i, bp in enumerate(bullet_points[:4]):
+        y = bp_start_y + i * 30
+        bullet_svg += f'    <circle cx="140" cy="{y - 5}" r="4" fill="{accent}"/>\n'
+        bullet_svg += f'    <text x="155" y="{y}" font-family="{body_font}" font-size="14" fill="{text_color}" opacity="0.7">{_escape_xml(bp[:80])}</text>\n'
+
+    slide_num_display = f"{slide_num:02d}"
+
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {CANVAS_W} {CANVAS_H}" width="{CANVAS_W}" height="{CANVAS_H}">
+  <g id="slide_{slide_num_display}">
+    <rect width="{CANVAS_W}" height="{CANVAS_H}" fill="{bg}"/>
+    <rect x="0" y="0" width="{CANVAS_W}" height="6" fill="{accent}"/>
+    <text x="120" y="100" font-family="{heading_font}" font-weight="Bold" font-size="{heading_size}" fill="{text_color}">
+      {_escape_xml(title[:60])}
+    </text>
+    <rect x="120" y="120" width="300" height="3" rx="1" fill="{accent}"/>
+{table_svg}
+{bullet_svg}
     <text x="1860" y="1050" text-anchor="end" font-family="{body_font}" font-size="14" fill="{text_color}" opacity="0.4">
       {slide_num_display}
     </text>
