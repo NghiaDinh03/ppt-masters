@@ -1190,7 +1190,9 @@ async def pipeline_slide_image(job_id: str, slide_num: int):
     if not images_dir.exists():
         raise HTTPException(404, "No images for this slide")
 
-    images = list(images_dir.glob("*"))
+    # Only pick actual image files, not directories
+    image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+    images = [f for f in images_dir.iterdir() if f.is_file() and f.suffix.lower() in image_extensions]
     if not images:
         raise HTTPException(404, "No images found")
 

@@ -271,7 +271,28 @@ const selectStyle: React.CSSProperties = {
   fontSize: '13px',
   outline: 'none',
   cursor: 'pointer',
+  appearance: 'none' as any,
 };
+
+// Inject global styles for select options
+if (typeof document !== 'undefined') {
+  const styleId = 'select-option-styles';
+  if (!document.getElementById(styleId)) {
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      select option {
+        background: #1a1a2e;
+        color: #ffffff;
+        padding: 8px;
+      }
+      select:focus {
+        border-color: #5b8def;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+}
 
 const btnPrimaryStyle: React.CSSProperties = {
   background: 'linear-gradient(135deg, #5b8def 0%, #8b5cf6 100%)',
