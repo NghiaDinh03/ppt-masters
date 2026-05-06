@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Vision Analyze Slides v2 — 3-step approach
+Vision Analyze Slides v3 — OCR-based approach
 
-Step 1: Trích xuất text bằng python-pptx (đã có trong extract_slide_assets.py)
-Step 2: Hình nào không trích xuất được text -> push lên vision AI -> match vào markdown
-Step 3: Gửi markdown hoàn chỉnh lên text AI để tổng hợp và diễn giải
+Step 1: python-pptx trích text từ PPTX (text frame, table, group, chart)
+Step 2: OCR trích text từ HÌNH (chart, diagram, screenshot) -> gộp vào markdown
+Step 3: Gửi markdown hoàn chỉnh lên text AI -> phân tích, tóm tắt
 
-System prompt tiếng Việt có dấu.
+Không cần vision multimodal AI — chỉ cần OCR + text AI.
+Không bị content filter chặn vì chỉ gửi text, không gửi hình.
 
 Usage:
     python3 vision_analyze_slides.py <project_path> [--llm openclaude|ollama]
@@ -15,45 +16,16 @@ Usage:
 import sys
 import os
 import json
-import base64
+import re
 from pathlib import Path
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-# Windows console encoding fix
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
-
-# ─────────────────────────────────────────────────────────────
-# System Prompts (Tiếng Việt có dấu)
-# ─────────────────────────────────────────────────────────────
-
-VISION_SYSTEM_PROMPT = """Bạn là chuyên gia phân tích tài liệu trình bày (presentation).
-Nhiệm vụ: Phân tích hình ảnh slide và trích xuất TOÀN BỘ nội dung từ hình ảnh.
-
-QUY TẮC BẮT BUỘC:
-1. Đọc TẤT CẢ text trong hình ảnh (bao gồm số liệu, chữ, ký tự đặc biệt)
-2. Nếu có bảng/biểu đồ → trích xuất dữ liệu chính xác (số, phần trăm, tên mục)
-3. Nếu có sơ đồ/thiết kế → mô tả cấu trúc và các thành phần
-4. Nếu có chart (biểu đồ) → trích xuất giá trị dữ liệu, trục X/Y, legend
-5. Nếu có sơ đồ mạng/quy trình → mô tả từng bước, từng thành phần
-6. Ghi nhận TẤT CẢ chi tiết — không được bỏ qua bất kỳ thông tin nào
-7. Nếu hình ảnh mờ/blur → ghi nhận "không rõ" thay vì đoán
-
-Output JSON format:
-{
-  "title": "Tiêu đề slide (từ hình ảnh)",
-  "content": "Nội dung đầy đủ trích xuất từ hình ảnh",
-  "data_points": ["Dữ liệu 1: giá trị", "Dữ liệu 2: giá trị"],
-  "diagram_description": "Mô tả sơ đồ/biểu đồ nếu có",
-  "table_data": ["hàng 1: cột1 | cột2 | cột3", "hàng 2: ..."],
-  "key_insights": ["Insight 1", "Insight 2"],
-  "image_type": "chart|diagram|screenshot|table|photo|mixed"
-}"""
 
 
 ENRICH_SYSTEM_PROMPT = """Bạn là chuyên gia thiết kế bài giảng và nội dung giáo dục.
@@ -65,13 +37,8 @@ QUY TẮC BẮT BUỘC:
 3. Sử dụng ngôn ngữ đơn giản, dễ tiếp cận cho người học
 4. Format: bullet points rõ ràng, có tiêu đề phụ nếu cần
 5. Nếu có dữ liệu số → giữ nguyên số, thêm context giải thích
-6. Nếu có nội dung từ hình ảnh (OCR/vision) → ghép vào nội dung chính hợp lý
+6. Nếu có nội dung từ OCR (hình ảnh) → ghép vào nội dung chính hợp lý
 7. Mục tiêu: Người đọc slide này hiểu ngay nội dung mà không cần nghe giảng thêm
-
-VÍ DỤ:
-- Input: "Con gà trống biết gáy"
-- Output SAI (tóm tắt): "Có con gà trống biết gáy"
-- Output ĐÚNG (diễn giải): "Con gà trống là con gà có khả năng phát ra tiếng gáy. Chỉ con gà trống mới biết gáy, con gà mái không biết gáy. Tiếng gáy của gà trống thường vang vào buổi sáng sớm, báo hiệu một ngày mới bắt đầu."
 
 Output JSON format:
 {
@@ -83,8 +50,56 @@ Output JSON format:
 }"""
 
 
+def _init_ocr():
+    """Initialize OCR engine (EasyOCR preferred, Tesseract fallback)."""
+    # Try EasyOCR
+    try:
+        import easyocr
+        reader = easyocr.Reader(["vi", "en"], gpu=False)
+        def ocr_easyocr(image_path):
+            results = reader.readtext(image_path)
+            texts = [r[1] for r in results if r[2] > 0.3]
+            return "\n".join(texts)
+        print("[ocr] Using EasyOCR (vi+en)")
+        return ocr_easyocr
+    except ImportError:
+        pass
+
+    # Try Tesseract
+    try:
+        import pytesseract
+        from PIL import Image
+        try:
+            pytesseract.get_tesseract_version()
+        except Exception:
+            common_paths = [
+                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+                os.path.expanduser(r"~\AppData\Local\Tesseract-OCR\tesseract.exe"),
+            ]
+            for p in common_paths:
+                if os.path.exists(p):
+                    pytesseract.pytesseract.tesseract_cmd = p
+                    break
+            else:
+                return None
+
+        def ocr_tesseract(image_path):
+            img = Image.open(image_path)
+            try:
+                return pytesseract.image_to_string(img, lang="vie+eng")
+            except Exception:
+                return pytesseract.image_to_string(img, lang="eng")
+        print("[ocr] Using Tesseract")
+        return ocr_tesseract
+    except ImportError:
+        pass
+
+    return None
+
+
 def vision_analyze_slides(project_path: Path, llm_provider: str = "openclaude") -> dict:
-    """3-step analysis: extract -> vision -> text enrichment.
+    """3-step analysis: extract -> OCR images -> text enrichment.
 
     Args:
         project_path: Project directory
@@ -100,78 +115,56 @@ def vision_analyze_slides(project_path: Path, llm_provider: str = "openclaude") 
     slides = json.loads(metadata_path.read_text(encoding="utf-8"))
     images_dir = project_path / "sources" / "images"
 
-    print(f"[vision] Phân tích {len(slides)} slides với {llm_provider}...")
+    print(f"[vision] Phân tích {len(slides)} slides...")
 
-    # ── Step 2: Vision analysis cho slides có hình ──
-    print(f"\n[vision] === STEP 2: Phân tích hình ảnh bằng Vision AI ===")
+    # ── Step 2: OCR images + merge vào content ──
+    print(f"\n[vision] === STEP 2: OCR hình ảnh + gộp vào content ===")
+    ocr_func = _init_ocr()
+    ocr_count = 0
     vision_results = []
-    vision_count = 0
-    skip_count = 0
 
     for i, slide in enumerate(slides):
         num = slide.get("slide_number", 0)
         title = slide.get("title", "")
         content = slide.get("content_raw", "")
         slide_images = slide.get("images_extracted", [])
-        text_length = slide.get("text_length", 0)
 
-        # Quyết định: có cần vision AI không?
-        # Nếu text đã đủ dài (>100 chars) và không có hình -> skip vision
-        if not slide_images:
-            vision_results.append({
-                "slide_number": num, "title": title, "content": content,
-                "data_points": [], "diagram_description": "",
-                "table_data": slide.get("table_data", []),
-                "key_insights": [], "image_type": "text_only", "has_image": False,
-                "needs_vision": False,
-            })
-            skip_count += 1
-            continue
+        ocr_text = ""
+        if slide_images and ocr_func:
+            for img_name in slide_images:
+                img_path = images_dir / img_name
+                if img_path.exists():
+                    try:
+                        text = ocr_func(str(img_path))
+                        if text and len(text.strip()) > 5:
+                            ocr_text += text.strip() + "\n"
+                            ocr_count += 1
+                            print(f"[ocr]   Slide {num}: {img_name} -> {len(text)} chars")
+                    except Exception as e:
+                        print(f"[ocr]   Slide {num}: {img_name} -> error: {str(e)[:60]}")
+        elif slide_images and not ocr_func:
+            print(f"[ocr]   Slide {num}: có {len(slide_images)} hình nhưng chưa cài OCR engine")
 
-        # Có hình -> LUÔN gửi lên vision AI để trích xuất thêm data
-        # (hình có thể chứa chart, table, diagram mà text extraction không bắt được)
-        print(f"[vision] Slide {num}: {title[:40]}... -> gửi {len(slide_images)} hình lên vision AI")
+        # Merge OCR text vào content
+        full_content = content
+        if ocr_text:
+            full_content = content + "\n\n[Noi dung tu hinh anh]\n" + ocr_text
 
-        img_paths = []
-        for img_name in slide_images:
-            img_path = images_dir / img_name
-            if img_path.exists():
-                img_paths.append(str(img_path))
-
-        if not img_paths:
-            vision_results.append({
-                "slide_number": num, "title": title, "content": content,
-                "data_points": [], "diagram_description": "",
-                "table_data": slide.get("table_data", []),
-                "key_insights": [], "image_type": "no_images", "has_image": False,
-                "needs_vision": False,
-            })
-            continue
-
-        try:
-            vision_result = _analyze_with_vision(img_paths, title, content, llm_provider)
-            vision_result["slide_number"] = num
-            vision_result["has_image"] = True
-            vision_result["needs_vision"] = True
-            vision_results.append(vision_result)
-            vision_count += 1
-            print(f"[vision]   OK - {vision_result.get('image_type', 'unknown')}")
-        except Exception as e:
-            print(f"[vision]   ERROR: {str(e)[:80]}")
-            vision_results.append({
-                "slide_number": num, "title": title, "content": content,
-                "data_points": [], "diagram_description": "",
-                "table_data": slide.get("table_data", []),
-                "key_insights": [], "image_type": "error", "has_image": True,
-                "needs_vision": True, "error": str(e)[:200],
-            })
+        vision_results.append({
+            "slide_number": num, "title": title, "content": full_content,
+            "ocr_text": ocr_text.strip(),
+            "data_points": [], "diagram_description": "",
+            "table_data": slide.get("table_data", []),
+            "key_insights": [], "image_type": "ocr" if ocr_text else "text_only",
+            "has_image": bool(slide_images),
+        })
 
     # Save vision results
     vision_path = project_path / "vision_analysis.json"
     vision_path.write_text(json.dumps(vision_results, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n[vision] Step 2 hoàn thành: {vision_count} slides phân tích bằng vision, {skip_count} skip")
+    print(f"\n[vision] Step 2 hoàn thành: {ocr_count} hình OCR thành công")
 
-    # ── Step 3: Text enrichment cho TẤT CẢ slides ──
+    # ── Step 3: Text enrichment ──
     print(f"\n[vision] === STEP 3: Tổng hợp nội dung bằng Text AI ===")
     enriched_slides = _enrich_all_slides(vision_results, llm_provider)
 
@@ -193,120 +186,18 @@ def vision_analyze_slides(project_path: Path, llm_provider: str = "openclaude") 
         if slide.get("bullet_points"):
             content_md += "\n" + "\n".join(f"- {bp}" for bp in slide["bullet_points"])
         if slide.get("summary"):
-            content_md += f"\n\n**Tóm tắt:** {slide['summary']}"
+            content_md += f"\n\n**Tom tat:** {slide['summary']}"
         (slide_dir / "content.md").write_text(content_md, encoding="utf-8")
 
     success_count = sum(1 for s in enriched_slides if s.get("enriched"))
-    print(f"\n[vision] Step 3 hoàn thành: {success_count}/{len(enriched_slides)} slides được diễn giải")
-    print(f"[vision] Đã lưu: {enriched_path}")
+    print(f"\n[vision] Step 3 hoan thanh: {success_count}/{len(enriched_slides)} slides duoc dien giai")
+    print(f"[vision] Da luu: {enriched_path}")
 
     return {
         "total_slides": len(enriched_slides),
-        "vision_count": vision_count,
+        "ocr_count": ocr_count,
         "enriched_count": success_count,
     }
-
-
-def _analyze_with_vision(img_paths: list, title: str, content: str, provider: str) -> dict:
-    """Send images to vision AI for analysis with fallback."""
-    if provider == "ollama":
-        return _vision_ollama(img_paths, title, content)
-
-    # Try Open Claude first, fallback to Ollama
-    try:
-        result = _vision_openclaude(img_paths, title, content)
-        return result
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "blocked" in error_msg or "stream ended" in error_msg or "timeout" in error_msg:
-            print(f"[vision]   Open Claude blocked/timeout, falling back to Ollama...")
-            try:
-                return _vision_ollama(img_paths, title, content)
-            except Exception as e2:
-                print(f"[vision]   Ollama also failed: {str(e2)[:60]}")
-                raise e
-        raise
-
-
-def _vision_openclaude(img_paths: list, title: str, content: str) -> dict:
-    """Use Open Claude with vision model."""
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("openai package required. pip install openai")
-
-    try:
-        from config import load_prefixed_env_file
-        load_prefixed_env_file(("LLM_",))
-    except Exception:
-        pass
-
-    api_key = os.environ.get("LLM_API_KEY", "")
-    base_url = os.environ.get("LLM_BASE_URL", "https://open-claude.com/v1")
-    model = os.environ.get("LLM_VISION_MODEL", os.environ.get("LLM_MODEL", "kimi-k2.5"))
-
-    if not api_key:
-        raise ValueError("LLM_API_KEY not set")
-
-    client = OpenAI(api_key=api_key, base_url=base_url)
-
-    # Build message with images
-    content_parts = [
-        {"type": "text", "text": f"Phân tích hình ảnh slide sau và trích xuất TOÀN BỘ nội dung.\n\nTiêu đề: {title}\nNội dung text đã trích xuất: {content[:1000]}"}
-    ]
-
-    for img_path in img_paths[:3]:
-        try:
-            with open(img_path, "rb") as f:
-                img_data = base64.b64encode(f.read()).decode("utf-8")
-            ext = Path(img_path).suffix.lower()
-            mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext.lstrip("."), "image/jpeg")
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{img_data}"}
-            })
-        except Exception as e:
-            print(f"[vision]   Không thể load hình {img_path}: {e}")
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": VISION_SYSTEM_PROMPT},
-            {"role": "user", "content": content_parts},
-        ],
-        max_tokens=2000,
-        temperature=0.3,
-    )
-
-    result_text = response.choices[0].message.content
-    return _parse_json_response(result_text, title, content)
-
-
-def _vision_ollama(img_paths: list, title: str, content: str) -> dict:
-    """Use Ollama with vision model."""
-    import requests
-
-    endpoint = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
-    model = os.environ.get("OLLAMA_VISION_MODEL", "llava:13b")
-
-    images_b64 = []
-    for img_path in img_paths[:3]:
-        try:
-            with open(img_path, "rb") as f:
-                images_b64.append(base64.b64encode(f.read()).decode("utf-8"))
-        except Exception:
-            pass
-
-    prompt = f"{VISION_SYSTEM_PROMPT}\n\nPhân tích hình ảnh slide sau:\nTiêu đề: {title}\nNội dung: {content[:1000]}"
-
-    resp = requests.post(
-        f"{endpoint}/api/generate",
-        json={"model": model, "prompt": prompt, "images": images_b64, "stream": False},
-        timeout=120,
-    )
-    resp.raise_for_status()
-    result_text = resp.json().get("response", "")
-    return _parse_json_response(result_text, title, content)
 
 
 def _enrich_all_slides(vision_results: list, provider: str) -> list:
@@ -318,17 +209,6 @@ def _enrich_all_slides(vision_results: list, provider: str) -> list:
         title = vr.get("title", "")
         content = vr.get("content", "")
 
-        # Merge vision data vào content
-        if vr.get("data_points"):
-            content += "\n\nDữ liệu:\n" + "\n".join(f"- {dp}" for dp in vr["data_points"])
-        if vr.get("diagram_description"):
-            content += f"\n\nMô tả sơ đồ: {vr['diagram_description']}"
-        if vr.get("table_data"):
-            content += "\n\nBảng dữ liệu:\n" + "\n".join(vr["table_data"])
-        if vr.get("key_insights"):
-            content += "\n\nNhận định:\n" + "\n".join(f"- {ki}" for ki in vr["key_insights"])
-
-        # Thử AI enrichment
         try:
             result = _enrich_with_ai(title, content, provider)
             result["slide_number"] = num
@@ -337,29 +217,29 @@ def _enrich_all_slides(vision_results: list, provider: str) -> list:
             enriched.append(result)
             print(f"[enrich] Slide {num}: OK")
         except Exception as e:
-            print(f"[enrich] Slide {num}: Thất bại ({str(e)[:60]})")
+            print(f"[enrich] Slide {num}: That bai ({str(e)[:60]})")
             enriched.append({
                 "slide_number": num, "type": vr.get("image_type", "content"),
                 "title": title, "content": content,
                 "bullet_points": [], "summary": "", "enriched": False,
-                "image_hint": f"hình ảnh liên quan đến {title}",
+                "image_hint": f"hinh anh lien quan den {title}",
             })
 
     return enriched
 
 
 def _enrich_with_ai(title: str, content: str, provider: str) -> dict:
-    """Enrich a single slide with text AI. Fallback to Ollama if cloud blocked."""
+    """Enrich a single slide with text AI. Fallback chain: cloud -> ollama."""
     if provider == "ollama":
         return _enrich_ollama(title, content)
 
-    # Try Open Claude first
+    # Try cloud first
     try:
-        return _enrich_openclaude(title, content)
+        return _enrich_cloud(title, content)
     except Exception as e:
         error_msg = str(e).lower()
-        if "blocked" in error_msg or "stream ended" in error_msg or "timeout" in error_msg:
-            print(f"[enrich]   Open Claude blocked, falling back to Ollama...")
+        if "blocked" in error_msg or "stream ended" in error_msg or "timeout" in error_msg or "connection" in error_msg:
+            print(f"[enrich]   Cloud failed, falling back to Ollama...")
             try:
                 return _enrich_ollama(title, content)
             except Exception as e2:
@@ -368,8 +248,8 @@ def _enrich_with_ai(title: str, content: str, provider: str) -> dict:
         raise
 
 
-def _enrich_openclaude(title: str, content: str) -> dict:
-    """Enrich using Open Claude API."""
+def _enrich_cloud(title: str, content: str) -> dict:
+    """Enrich using cloud API (Open Claude / DeepSeek)."""
     try:
         from openai import OpenAI
     except ImportError:
@@ -385,9 +265,11 @@ def _enrich_openclaude(title: str, content: str) -> dict:
     base_url = os.environ.get("LLM_BASE_URL", "https://open-claude.com/v1")
     model = os.environ.get("LLM_MODEL", "deepseek-v4-flash")
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    if not api_key:
+        raise ValueError("LLM_API_KEY not set")
 
-    prompt = f"Tiêu đề: {title}\nNội dung:\n{content[:3000]}\n\nHãy diễn giải chi tiết và trả về JSON."
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    prompt = f"Tieu de: {title}\nNoi dung:\n{content[:3000]}\n\nHay dien giai chi tiet va tra ve JSON."
 
     response = client.chat.completions.create(
         model=model,
@@ -407,9 +289,9 @@ def _enrich_ollama(title: str, content: str) -> dict:
     """Enrich using Ollama local model."""
     import requests
     endpoint = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
-    model = os.environ.get("OLLAMA_MODEL", "gemma4:8b")
+    model = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
 
-    prompt = f"{ENRICH_SYSTEM_PROMPT}\n\nTiêu đề: {title}\nNội dung:\n{content[:3000]}"
+    prompt = f"{ENRICH_SYSTEM_PROMPT}\n\nTieu de: {title}\nNoi dung:\n{content[:3000]}"
 
     resp = requests.post(
         f"{endpoint}/api/generate",
@@ -436,7 +318,6 @@ def _parse_json_response(text: str, fallback_title: str, fallback_content: str) 
     try:
         return json.loads(clean)
     except json.JSONDecodeError:
-        import re
         json_match = re.search(r'\{[^{}]*\}', clean, re.DOTALL)
         if json_match:
             try:
@@ -449,13 +330,13 @@ def _parse_json_response(text: str, fallback_title: str, fallback_content: str) 
             "content": fallback_content,
             "bullet_points": [],
             "summary": "",
-            "image_hint": f"hình ảnh liên quan đến {fallback_title}",
+            "image_hint": f"hinh anh lien quan den {fallback_title}",
         }
 
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Vision analyze slides (3-step approach)")
+    parser = argparse.ArgumentParser(description="Vision analyze slides (OCR + text AI)")
     parser.add_argument("project_path", help="Project directory")
     parser.add_argument("--llm", default="openclaude", choices=["openclaude", "ollama"],
                         help="LLM provider (default: openclaude)")
