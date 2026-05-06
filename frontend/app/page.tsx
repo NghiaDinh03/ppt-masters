@@ -504,39 +504,95 @@ function PipelinePage() {
       {/* Slide Preview */}
       {slides.length > 0 && (
         <div style={{ ...cardStyle }}>
-          <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
-            Slides Preview ({slides.length} slides)
-          </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600 }}>
+              Slides Preview ({slides.length} slides)
+            </h3>
+            <button onClick={() => {
+              if (jobId) window.open(`http://localhost:8000/api/pipeline/download-folder/${jobId}`, '_blank');
+            }} style={{
+              padding: '8px 16px', borderRadius: '6px', border: 'none',
+              background: 'rgba(91,141,239,0.2)', color: '#5b8def', fontWeight: 600,
+              cursor: 'pointer', fontSize: '12px',
+            }}>
+              Download Slides Folder (ZIP)
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {slides.map((slide: any, i: number) => (
               <div key={i} style={{
-                background: 'rgba(255,255,255,0.03)', borderRadius: '8px', padding: '16px',
+                background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '16px',
                 border: '1px solid rgba(255,255,255,0.06)',
+                display: 'flex', gap: '16px',
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ color: '#5b8def', fontSize: '12px', fontWeight: 600 }}>
-                    Slide {slide.slide_number}
-                  </span>
-                  <span style={{
-                    fontSize: '10px', padding: '2px 8px', borderRadius: '4px',
-                    background: slide.enriched ? 'rgba(52,168,83,0.2)' : 'rgba(255,255,255,0.1)',
-                    color: slide.enriched ? '#34a853' : 'rgba(255,255,255,0.4)',
-                  }}>
-                    {slide.enriched ? 'Enriched' : 'Raw'}
-                  </span>
+                {/* Image thumbnail */}
+                <div style={{
+                  width: '200px', minWidth: '200px', height: '120px', borderRadius: '6px',
+                  overflow: 'hidden', background: 'rgba(255,255,255,0.05)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0,
+                }}>
+                  {slide.local_images?.length > 0 ? (
+                    <img
+                      src={`http://localhost:8000/api/pipeline/slide-image/${jobId}/${slide.slide_number}`}
+                      alt={`Slide ${slide.slide_number}`}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  ) : (
+                    <div style={{ color: 'rgba(255,255,255,0.2)', fontSize: '12px' }}>No image</div>
+                  )}
                 </div>
-                <h4 style={{ color: '#fff', fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>
-                  {slide.title?.substring(0, 50)}
-                </h4>
-                <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', lineHeight: '1.5',
-                  maxHeight: '60px', overflow: 'hidden' }}>
-                  {slide.content?.substring(0, 120)}...
-                </p>
-                {slide.local_images?.length > 0 && (
-                  <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>
-                    {slide.local_images.length} image(s)
+
+                {/* Content */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ color: '#5b8def', fontSize: '12px', fontWeight: 600 }}>
+                      Slide {slide.slide_number}
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      {slide.type && (
+                        <span style={{
+                          fontSize: '10px', padding: '2px 8px', borderRadius: '4px',
+                          background: 'rgba(139,92,246,0.2)', color: '#8b5cf6',
+                        }}>
+                          {slide.type}
+                        </span>
+                      )}
+                      <span style={{
+                        fontSize: '10px', padding: '2px 8px', borderRadius: '4px',
+                        background: slide.enriched ? 'rgba(52,168,83,0.2)' : 'rgba(255,255,255,0.1)',
+                        color: slide.enriched ? '#34a853' : 'rgba(255,255,255,0.4)',
+                      }}>
+                        {slide.enriched ? 'Enriched' : 'Raw'}
+                      </span>
+                    </div>
                   </div>
-                )}
+                  <h4 style={{ color: '#fff', fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>
+                    {slide.title?.substring(0, 80)}
+                  </h4>
+                  <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', lineHeight: '1.6',
+                    maxHeight: '80px', overflow: 'hidden' }}>
+                    {slide.content?.substring(0, 250)}{slide.content?.length > 250 ? '...' : ''}
+                  </p>
+                  {slide.bullet_points?.length > 0 && (
+                    <div style={{ marginTop: '6px' }}>
+                      {slide.bullet_points.slice(0, 3).map((bp: string, j: number) => (
+                        <div key={j} style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', paddingLeft: '10px',
+                          position: 'relative', lineHeight: '1.4' }}>
+                          <span style={{ position: 'absolute', left: 0, color: '#5b8def' }}>-</span>
+                          {bp.substring(0, 100)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {slide.summary && (
+                    <div style={{ marginTop: '6px', padding: '6px 10px', background: 'rgba(91,141,239,0.08)',
+                      borderRadius: '4px', fontSize: '11px', color: 'rgba(255,255,255,0.6)' }}>
+                      {slide.summary.substring(0, 150)}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>

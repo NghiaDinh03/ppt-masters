@@ -27,6 +27,29 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 
+def _clean_for_speech(text: str) -> str:
+    """Clean text for natural speech output (TTS)."""
+    import re
+    # Remove markdown formatting
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # bold
+    text = re.sub(r'\*(.*?)\*', r'\1', text)  # italic
+    text = re.sub(r'#{1,6}\s*', '', text)  # headers
+    text = re.sub(r'[-*•]\s+', '', text)  # bullets
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)  # links
+    text = re.sub(r'`([^`]+)`', r'\1', text)  # code
+    text = re.sub(r'\|', ',', text)  # table separators
+    text = re.sub(r'---+', '.', text)  # horizontal rules
+    text = re.sub(r'\n{2,}', '. ', text)  # multiple newlines
+    text = re.sub(r'\n', ' ', text)  # single newlines
+    text = re.sub(r'\s{2,}', ' ', text)  # multiple spaces
+    text = re.sub(r'\.{2,}', '.', text)  # multiple dots
+    text = text.strip()
+    # Remove trailing punctuation duplicates
+    if text and text[-1] in ',;':
+        text = text[:-1] + '.'
+    return text
+
+
 def generate_slide_audio(project_path: Path, provider: str = "edge", voice: str = None, voice_id: str = None) -> dict:
     """Generate audio for each slide.
 
@@ -54,15 +77,45 @@ def generate_slide_audio(project_path: Path, provider: str = "edge", voice: str 
         num = slide.get("slide_number", 0)
         content = slide.get("content", slide.get("content_raw", ""))
         title = slide.get("title", "")
+        bullet_points = slide.get("bullet_points", [])
+        summary = slide.get("summary", "")
 
-        # Create note file (skip headings, keep spoken text)
-        spoken = f"{title}. {content}" if title else content
-        # Clean markdown
-        spoken = spoken.replace("**", "").replace("##", "").replace("#", "")
-        spoken = spoken.replace("- ", "").replace("* ", "")
+        # Build clean spoken text
+        spoken_parts = []
 
-        note_path = notes_dir / f"slide_{num:02d}.md"
-        note_path.write_text(spoken.strip(), encoding="utf-8")
+        # Add title as spoken intro
+        if title and len(title) > 3:
+            spoken_parts.append(f"{title}.")
+
+        # Add summary first if available (most concise)
+        if summary and len(summary) > 10:
+            spoken_parts.append(summary)
+
+        # Add bullet points (clean, structured)
+        if bullet_points:
+            for bp in bullet_points[:6]:
+                bp_clean = _clean_for_speech(bp)
+                if bp_clean and len(bp_clean) > 5:
+                    spoken_parts.append(bp_clean)
+
+        # If no bullets, use content
+        if not spoken_parts or (len(spoken_parts) == 1 and title):
+            content_clean = _clean_for_speech(content)
+            if content_clean:
+                spoken_parts.append(content_clean)
+
+        # Join and limit length (avoid too long audio per slide)
+        spoken = " ".join(spoken_parts)
+        if len(spoken) > 1500:
+            spoken = spoken[:1500] + "..."
+
+        # Write clean text file (not markdown)
+        txt_path = notes_dir / f"slide_{num:02d}.txt"
+        txt_path.write_text(spoken.strip(), encoding="utf-8")
+
+        # Also write markdown version for reference
+        md_path = notes_dir / f"slide_{num:02d}.md"
+        md_path.write_text(f"# {title}\n\n{content}", encoding="utf-8")
 
     # Write total.md
     total = "\n\n".join(

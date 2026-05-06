@@ -1197,6 +1197,59 @@ async def pipeline_slide_image(job_id: str, slide_num: int):
     return FileResponse(path=str(images[0]))
 
 
+@app.get("/api/pipeline/download-folder/{job_id}")
+async def pipeline_download_folder(job_id: str):
+    """Download the slides folder as a ZIP file."""
+    import zipfile
+    import io
+
+    if job_id not in _pipeline_jobs:
+        raise HTTPException(404, "Job not found")
+
+    job = _pipeline_jobs[job_id]
+    output_dir = Path(job.get("output_dir", ""))
+    slides_dir = output_dir / "slides"
+
+    if not slides_dir.exists():
+        raise HTTPException(404, "Slides folder not ready")
+
+    # Create ZIP in memory
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Add slides folder
+        for slide_dir in sorted(slides_dir.iterdir()):
+            if slide_dir.is_dir():
+                for file in slide_dir.rglob("*"):
+                    if file.is_file():
+                        arcname = f"slides/{slide_dir.name}/{file.name}"
+                        zf.write(file, arcname)
+
+        # Add PPTX if exists
+        pptx_path = job.get("pptx_path")
+        if pptx_path and Path(pptx_path).exists():
+            zf.write(pptx_path, f"exports/{Path(pptx_path).name}")
+
+        # Add enriched content
+        enriched_path = output_dir / "slides_enriched.json"
+        if enriched_path.exists():
+            zf.write(enriched_path, "slides_enriched.json")
+
+        # Add audio folder
+        audio_dir = output_dir / "audio"
+        if audio_dir.exists():
+            for audio_file in audio_dir.glob("*.mp3"):
+                zf.write(audio_file, f"audio/{audio_file.name}")
+
+    zip_buffer.seek(0)
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=slides_{job_id}.zip"}
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
