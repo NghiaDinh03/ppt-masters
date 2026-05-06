@@ -334,7 +334,14 @@ const btnSecondaryStyle: React.CSSProperties = {
 
 function PipelinePage() {
   const [file, setFile] = useState<File | null>(null);
-  const [stylePrompt, setStylePrompt] = useState('[title] Presentation\n[style] hiện đại, xanh dương\n[font] Montserrat 36pt\n[layout] 2 cột\n[image] hình ảnh minh họa\n[language] tiếng Việt\n[pages] 8-10 slides');
+  const [stylePrompt, setStylePrompt] = useState(`[title] Giáo dục STEM - Phương pháp giảng dạy hiện đại
+[style] gradient xanh dương đậm đến tím, nền galaxy, hiện đại, chuyên nghiệp
+[font] tiêu đề Montserrat Bold 36pt, nội dung Open Sans 18pt
+[layout] slide đầu full hình nền, các slide sau chia 2 cột (text trái, hình phải)
+[icon] icon phẳng, style line, 2 tông màu xanh-trắng
+[image] hình ảnh liên quan đến giáo dục, công nghệ, STEM, phòng lab, học sinh
+[language] tiếng Việt
+[pages] 10 slides`);
   const [imageMode, setImageMode] = useState('auto');
   const [llmProvider, setLlmProvider] = useState('openclaude');
   const [ttsProvider, setTtsProvider] = useState('none');
@@ -502,23 +509,54 @@ function PipelinePage() {
         </div>
       )}
 
-      {/* Progress */}
+      {/* Progress + Live Logs */}
       {jobStatus && (
         <div style={{ ...cardStyle, marginBottom: '24px' }}>
-          <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>
-            Status: <span style={{ color: jobStatus.status === 'completed' ? '#34a853' : jobStatus.status === 'error' ? '#ea4335' : '#5b8def' }}>
-              {jobStatus.status}
-            </span>
-          </h3>
-          <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px' }}>{jobStatus.progress}</p>
-          {jobStatus.status === 'completed' && (
-            <button onClick={handleDownload} style={{
-              marginTop: '12px', padding: '10px 24px', borderRadius: '8px', border: 'none',
-              background: '#34a853', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '14px',
-            }}>
-              Download PPTX
-            </button>
-          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 600 }}>
+              Status: <span style={{ color: jobStatus.status === 'completed' ? '#34a853' : jobStatus.status === 'error' ? '#ea4335' : '#5b8def' }}>
+                {jobStatus.status}
+              </span>
+            </h3>
+            {jobStatus.status === 'completed' && (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={handleDownload} style={{
+                  padding: '8px 16px', borderRadius: '6px', border: 'none',
+                  background: '#34a853', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '12px',
+                }}>
+                  Download PPTX
+                </button>
+              </div>
+            )}
+          </div>
+          <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', marginBottom: '12px' }}>{jobStatus.progress}</p>
+
+          {/* Live Log Stream */}
+          <div style={{
+            background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '12px',
+            maxHeight: '300px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '11px',
+            lineHeight: '1.6', border: '1px solid rgba(255,255,255,0.05)',
+          }}>
+            {(jobStatus.logs || []).map((log: string, i: number) => (
+              <div key={i} style={{
+                color: log.includes('ERROR') || log.includes('error') || log.includes('BLOCKED')
+                  ? '#ea4335'
+                  : log.includes('OK') || log.includes('success') || log.includes('hoan thanh')
+                    ? '#34a853'
+                    : log.includes('WARNING') || log.includes('BLOCKED')
+                      ? '#fbbc04'
+                      : 'rgba(255,255,255,0.6)',
+                padding: '1px 0',
+              }}>
+                {log}
+              </div>
+            ))}
+            {jobStatus.status === 'running' && (
+              <div style={{ color: '#5b8def' }}>
+                Processing...
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -1079,13 +1079,37 @@ async def run_pipeline(
         "output_dir": str(output_dir),
         "result": None,
         "error": None,
+        "logs": [],
     }
 
     # Run pipeline in background thread
     import threading
+    import io
+
+    class LogCapture:
+        """Capture print output and store in job logs."""
+        def __init__(self, job_id):
+            self.job_id = job_id
+            self.original_stdout = sys.stdout
+            self.original_stderr = sys.stderr
+
+        def write(self, text):
+            self.original_stdout.write(text)
+            if text.strip() and self.job_id in _pipeline_jobs:
+                _pipeline_jobs[self.job_id]["logs"].append(text.rstrip())
+                # Keep only last 200 logs
+                if len(_pipeline_jobs[self.job_id]["logs"]) > 200:
+                    _pipeline_jobs[self.job_id]["logs"] = _pipeline_jobs[self.job_id]["logs"][-200:]
+
+        def flush(self):
+            self.original_stdout.flush()
 
     def _run():
         try:
+            # Redirect stdout to capture logs
+            log_capture = LogCapture(job_id)
+            sys.stdout = log_capture
+
             # Add scripts dir to path
             scripts_dir = BASE_DIR / "skills" / "ppt-master" / "scripts"
             if str(scripts_dir) not in sys.path:
@@ -1109,6 +1133,7 @@ async def run_pipeline(
             _pipeline_jobs[job_id]["status"] = "completed"
             _pipeline_jobs[job_id]["result"] = result
             _pipeline_jobs[job_id]["progress"] = "Done!"
+            _pipeline_jobs[job_id]["logs"].append("Pipeline completed successfully!")
 
             # Find PPTX output
             pptx_files = list(output_dir.rglob("*.pptx"))
@@ -1116,9 +1141,15 @@ async def run_pipeline(
                 _pipeline_jobs[job_id]["pptx_path"] = str(pptx_files[0])
 
         except Exception as e:
+            sys.stdout = log_capture.original_stdout
+            sys.stderr = log_capture.original_stderr
             _pipeline_jobs[job_id]["status"] = "error"
             _pipeline_jobs[job_id]["error"] = str(e)
             _pipeline_jobs[job_id]["progress"] = f"Error: {str(e)[:200]}"
+            _pipeline_jobs[job_id]["logs"].append(f"ERROR: {str(e)[:200]}")
+        finally:
+            sys.stdout = log_capture.original_stdout
+            sys.stderr = log_capture.original_stderr
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
