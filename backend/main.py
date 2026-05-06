@@ -1094,18 +1094,32 @@ async def run_pipeline(
             self.original_stderr = sys.stderr
 
         def write(self, text):
-            self.original_stdout.write(text)
+            try:
+                self.original_stdout.write(text)
+            except UnicodeEncodeError:
+                self.original_stdout.write(text.encode('utf-8', errors='replace').decode('utf-8', errors='replace'))
             if text.strip() and self.job_id in _pipeline_jobs:
                 _pipeline_jobs[self.job_id]["logs"].append(text.rstrip())
-                # Keep only last 200 logs
                 if len(_pipeline_jobs[self.job_id]["logs"]) > 200:
                     _pipeline_jobs[self.job_id]["logs"] = _pipeline_jobs[self.job_id]["logs"][-200:]
 
         def flush(self):
-            self.original_stdout.flush()
+            try:
+                self.original_stdout.flush()
+            except Exception:
+                pass
+
+        def fileno(self):
+            return self.original_stdout.fileno()
 
     def _run():
         try:
+            # Fix Windows console encoding
+            os.environ["PYTHONIOENCODING"] = "utf-8"
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
             # Redirect stdout to capture logs
             log_capture = LogCapture(job_id)
             sys.stdout = log_capture
