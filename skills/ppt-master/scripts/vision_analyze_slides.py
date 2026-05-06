@@ -128,21 +128,8 @@ def vision_analyze_slides(project_path: Path, llm_provider: str = "openclaude") 
             skip_count += 1
             continue
 
-        # Có hình -> kiểm tra xem text đã đủ chưa
-        if text_length > 100 and not any(kw in title.lower() for kw in ["sla", "chart", "bieu do", "so do", "tong ket", "thong ke"]):
-            # Text đã đủ, hình chỉ là minh họa -> không cần vision
-            vision_results.append({
-                "slide_number": num, "title": title, "content": content,
-                "data_points": [], "diagram_description": "",
-                "table_data": slide.get("table_data", []),
-                "key_insights": [], "image_type": "illustration", "has_image": True,
-                "needs_vision": False,
-            })
-            skip_count += 1
-            print(f"[vision] Slide {num}: {title[:40]}... -> text đủ, skip vision")
-            continue
-
-        # Cần vision AI -> gửi hình lên
+        # Có hình -> LUÔN gửi lên vision AI để trích xuất thêm data
+        # (hình có thể chứa chart, table, diagram mà text extraction không bắt được)
         print(f"[vision] Slide {num}: {title[:40]}... -> gửi {len(slide_images)} hình lên vision AI")
 
         img_paths = []
@@ -221,13 +208,24 @@ def vision_analyze_slides(project_path: Path, llm_provider: str = "openclaude") 
 
 
 def _analyze_with_vision(img_paths: list, title: str, content: str, provider: str) -> dict:
-    """Send images to vision AI for analysis."""
-    if provider == "openclaude":
-        return _vision_openclaude(img_paths, title, content)
-    elif provider == "ollama":
+    """Send images to vision AI for analysis with fallback."""
+    if provider == "ollama":
         return _vision_ollama(img_paths, title, content)
-    else:
-        return _vision_openclaude(img_paths, title, content)
+
+    # Try Open Claude first, fallback to Ollama
+    try:
+        result = _vision_openclaude(img_paths, title, content)
+        return result
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "blocked" in error_msg or "stream ended" in error_msg or "timeout" in error_msg:
+            print(f"[vision]   Open Claude blocked/timeout, falling back to Ollama...")
+            try:
+                return _vision_ollama(img_paths, title, content)
+            except Exception as e2:
+                print(f"[vision]   Ollama also failed: {str(e2)[:60]}")
+                raise e
+        raise
 
 
 def _vision_openclaude(img_paths: list, title: str, content: str) -> dict:
@@ -351,58 +349,76 @@ def _enrich_all_slides(vision_results: list, provider: str) -> list:
 
 
 def _enrich_with_ai(title: str, content: str, provider: str) -> dict:
-    """Enrich a single slide with text AI."""
-    if provider == "openclaude":
-        try:
-            from openai import OpenAI
-        except ImportError:
-            raise ImportError("openai package required")
+    """Enrich a single slide with text AI. Fallback to Ollama if cloud blocked."""
+    if provider == "ollama":
+        return _enrich_ollama(title, content)
 
-        try:
-            from config import load_prefixed_env_file
-            load_prefixed_env_file(("LLM_",))
-        except Exception:
-            pass
+    # Try Open Claude first
+    try:
+        return _enrich_openclaude(title, content)
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "blocked" in error_msg or "stream ended" in error_msg or "timeout" in error_msg:
+            print(f"[enrich]   Open Claude blocked, falling back to Ollama...")
+            try:
+                return _enrich_ollama(title, content)
+            except Exception as e2:
+                print(f"[enrich]   Ollama also failed: {str(e2)[:60]}")
+                raise e
+        raise
 
-        api_key = os.environ.get("LLM_API_KEY", "")
-        base_url = os.environ.get("LLM_BASE_URL", "https://open-claude.com/v1")
-        model = os.environ.get("LLM_MODEL", "kimi-k2.5")
 
-        client = OpenAI(api_key=api_key, base_url=base_url)
+def _enrich_openclaude(title: str, content: str) -> dict:
+    """Enrich using Open Claude API."""
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("openai package required")
 
-        prompt = f"Tiêu đề: {title}\nNội dung:\n{content[:3000]}\n\nHãy diễn giải chi tiết và trả về JSON."
+    try:
+        from config import load_prefixed_env_file
+        load_prefixed_env_file(("LLM_",))
+    except Exception:
+        pass
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": ENRICH_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=2000,
-            temperature=0.7,
-        )
+    api_key = os.environ.get("LLM_API_KEY", "")
+    base_url = os.environ.get("LLM_BASE_URL", "https://open-claude.com/v1")
+    model = os.environ.get("LLM_MODEL", "deepseek-v4-flash")
 
-        result_text = response.choices[0].message.content
-        return _parse_json_response(result_text, title, content)
+    client = OpenAI(api_key=api_key, base_url=base_url)
 
-    elif provider == "ollama":
-        import requests
-        endpoint = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
-        model = os.environ.get("OLLAMA_MODEL", "gemma4:8b")
+    prompt = f"Tiêu đề: {title}\nNội dung:\n{content[:3000]}\n\nHãy diễn giải chi tiết và trả về JSON."
 
-        prompt = f"{ENRICH_SYSTEM_PROMPT}\n\nTiêu đề: {title}\nNội dung:\n{content[:3000]}"
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": ENRICH_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=2000,
+        temperature=0.7,
+    )
 
-        resp = requests.post(
-            f"{endpoint}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=120,
-        )
-        resp.raise_for_status()
-        result_text = resp.json().get("response", "")
-        return _parse_json_response(result_text, title, content)
+    result_text = response.choices[0].message.content
+    return _parse_json_response(result_text, title, content)
 
-    else:
-        raise ValueError(f"Unknown provider: {provider}")
+
+def _enrich_ollama(title: str, content: str) -> dict:
+    """Enrich using Ollama local model."""
+    import requests
+    endpoint = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
+    model = os.environ.get("OLLAMA_MODEL", "gemma4:8b")
+
+    prompt = f"{ENRICH_SYSTEM_PROMPT}\n\nTiêu đề: {title}\nNội dung:\n{content[:3000]}"
+
+    resp = requests.post(
+        f"{endpoint}/api/generate",
+        json={"model": model, "prompt": prompt, "stream": False},
+        timeout=120,
+    )
+    resp.raise_for_status()
+    result_text = resp.json().get("response", "")
+    return _parse_json_response(result_text, title, content)
 
 
 def _parse_json_response(text: str, fallback_title: str, fallback_content: str) -> dict:
