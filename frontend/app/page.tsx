@@ -474,7 +474,7 @@ function PipelinePage() {
             <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px', display: 'block', marginBottom: '6px' }}>LLM Provider</label>
             <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)}
               style={selectStyle}>
-              <option value="openclaude">Open Claude (deepseek-v4-flash)</option>
+              <option value="openclaude">Open Claude (claude-sonnet-4-6)</option>
               <option value="ollama">Ollama Local (Gemma4)</option>
               <option value="none">None (Raw Content)</option>
             </select>

@@ -197,8 +197,8 @@ def _enrich_with_ollama(slides: list, project_path: Path) -> tuple:
     """Enrich slides using local Ollama."""
     import requests
 
-    endpoint = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
-    model = os.environ.get("OLLAMA_MODEL", "gemma4:8b")
+    endpoint = os.environ.get("OLLAMA_BASE_URL", os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434"))
+    model = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
 
     enriched = []
     success_count = 0

@@ -288,8 +288,8 @@ def _enrich_cloud(title: str, content: str) -> dict:
 def _enrich_ollama(title: str, content: str) -> dict:
     """Enrich using Ollama local model."""
     import requests
-    endpoint = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434")
-    model = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
+    endpoint = os.environ.get("OLLAMA_BASE_URL", os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434"))
+    model = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
 
     prompt = f"{ENRICH_SYSTEM_PROMPT}\n\nTieu de: {title}\nNoi dung:\n{content[:3000]}"
 
