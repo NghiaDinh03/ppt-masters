@@ -1,6 +1,6 @@
 # PPT Master — Repository Context & Analysis
 
-> Last updated: 2026-05-04
+> Last updated: 2026-05-06
 > Analyzed by: MiMo AI Agent
 
 ---
@@ -426,7 +426,67 @@ COSYVOICE_API_KEY=xxx     # CosyVoice TTS
 
 ---
 
-## 15. Quick Start Commands
+## 15. Auto PPTX Pipeline (New — 2026-05-06)
+
+### Pipeline Architecture
+```
+Input (PPTX/DOCX/PDF) → Extract text+images → OCR images → AI enrich → Image gen/search → Assemble SVG → PPTX
+```
+
+### New Scripts
+| Script | Purpose |
+|--------|---------|
+| `scripts/extract_slide_assets.py` | Extract text + images from PPTX/DOCX/PDF (python-pptx) |
+| `scripts/vision_analyze_slides.py` | 3-step: OCR images → merge into markdown → AI text enrichment |
+| `scripts/enrich_content.py` | AI content enrichment (diễn giải, not tóm tắt) |
+| `scripts/slide_image_pipeline.py` | Auto gen/search images per slide |
+| `scripts/parse_style_prompt.py` | Parse user style prompt → config JSON |
+| `scripts/assemble_slides.py` | Ráp content + images → SVG → PPTX |
+| `scripts/slide_audio_pipeline.py` | Generate audio per slide (edge-tts default) |
+| `scripts/auto_pptx_pipeline.py` | Unified 1-command pipeline |
+| `scripts/ocr_slide_images.py` | OCR standalone (EasyOCR/Tesseract) |
+| `scripts/image_backends/backend_pollinations.py` | Pollinations.ai free image gen |
+| `scripts/llm_backends/backend_openclaude.py` | Open Claude LLM backend |
+
+### LLM Configuration
+| Provider | Model | Use Case |
+|----------|-------|----------|
+| Open Claude (cloud) | `claude-sonnet-4-6` | Primary — no content filter |
+| Ollama (local) | `qwen3:8b` | Fallback — free, no filter |
+| Open Claude (cloud) | `deepseek-v4-flash` | Budget option (may be blocked) |
+
+### Image Sources (Priority Order)
+1. Pexels + Pixabay search (stock photos, free)
+2. Pollinations.ai gen (AI gen, free, no key)
+3. Open Claude gpt-5.4-image (AI gen, high quality)
+
+### Audio Strategy
+- Default: edge-tts (free, unlimited)
+- ElevenLabs: 10K tokens/month limit, use only when needed
+
+### Backend API Endpoints
+- `POST /api/pipeline/run` — trigger full pipeline
+- `GET /api/pipeline/status/{job_id}` — check progress + live logs
+- `GET /api/pipeline/download/{job_id}` — download PPTX
+- `GET /api/pipeline/download-folder/{job_id}` — download slides ZIP
+- `GET /api/pipeline/slides/{job_id}` — get slide data for preview
+- `GET /api/pipeline/slide-image/{job_id}/{slide_num}` — get slide image
+
+### Known Issues Fixed
+- Windows UTF-8 encoding: `sys.stdout.reconfigure(encoding="utf-8")`
+- Open Claude content filter: use `claude-sonnet-4-6` (not deepseek)
+- Ollama endpoint: use `OLLAMA_BASE_URL` env var
+- Image file filtering: filter by extensions, not directories
+
+### Known Issues Pending
+- Ollama qwen3:8b download in progress (5.2GB)
+- Content quality needs improvement
+- Image search relevance needs better queries
+- Audio fails when content is empty (enrichment failure cascade)
+
+---
+
+## 16. Quick Start Commands
 
 ```bash
 # Install dependencies
